@@ -394,6 +394,19 @@ describe('Gelfie', () => {
         transport.send(msg);
       });
     });
+
+    it('supports multiple calls to close()', () => {
+      const transport = new UdpTransport({
+        graylogHost: 'localhost',
+        graylogPort: 9000
+      }, null);
+
+      transport.close();
+      transport.close();
+      transport.connect();
+      transport.close();
+      transport.close();
+    });
   });
 
   it('exports log level constants', () => {
