@@ -15,6 +15,7 @@ describe('Gelfie', () => {
 
     Assert.strictEqual(client.host, Os.hostname());
     Assert.strictEqual(client.version, '1.1');
+    Assert.strictEqual(client.serializer, GelfClient.defaultSerializer);
   });
 
   it('validates constructor options', () => {
@@ -30,6 +31,7 @@ describe('Gelfie', () => {
     check({ version: 5 }, /^TypeError: version must be a string$/);
     check({ transport: 5 }, /^TypeError: transport must be a string$/);
     check({ transport: 'xxx' }, /^Error: unsupported transport: xxx$/);
+    check({ serializer: 5 }, /^TypeError: serializer must be a function$/);
   });
 
   it('supports all expected functions', () => {
@@ -106,18 +108,18 @@ describe('Gelfie', () => {
         Assert.strictEqual(Object.keys(msg).length, 6);
         Assert.strictEqual(msg.version, '99');
         Assert.strictEqual(msg.host, 'foo');
-        Assert.deepStrictEqual(msg.short_message, {
+        Assert.deepStrictEqual(msg.short_message, JSON.stringify({
           name: err.name,
           message: err.message,
           stack: err.stack
-        });
+        }));
         Assert.strictEqual(msg.full_message, undefined);
         Assert.strictEqual(msg.level, 3);
         Assert(Number.isFinite(msg.timestamp) && msg.timestamp > 0);
       },
       function (msg) {
         Assert.strictEqual(Object.keys(msg).length, 6);
-        Assert.strictEqual(msg.short_message, 'foo');
+        Assert.strictEqual(msg.short_message, JSON.stringify({ foo: null }));
         Assert.strictEqual(msg.full_message, 'bar');
       },
       function (msg) {
@@ -125,6 +127,9 @@ describe('Gelfie', () => {
       },
       function (msg) {
         Assert.strictEqual(msg.level, 2);
+      },
+      function (msg) {
+        Assert.strictEqual(msg.short_message, 'zzz123');
       }
     ];
 
@@ -139,9 +144,13 @@ describe('Gelfie', () => {
       });
 
       client.error(err);
-      client.error('foo', 'bar', null);
+      client.error({ foo: null }, 'bar', null);
       client.log(null, null, null, null, -1);
       client.log(null, null, null, null, 2);
+
+      // Custom serializer
+      client.serializer = function () { return 'zzz123'; };
+      client.log(null);
     });
   });
 
