@@ -1,0 +1,37 @@
+{
+  "name": "gelfie",
+  "version": "0.1.0",
+  "description": "GELF client",
+  "author": "Colin J. Ihrig <cjihrig@gmail.com> (http://www.cjihrig.com/)",
+  "main": "lib/index.js",
+  "homepage": "https://github.com/cjihrig/gelfie#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cjihrig/gelfie.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cjihrig/gelfie/issues"
+  },
+  "license": "MIT",
+  "scripts": {
+    "lint": "belly-button -f",
+    "pretest": "npm run lint",
+    "test": "lab -v -t 100"
+  },
+  "engines": {
+    "node": ">=10.0.0"
+  },
+  "devDependencies": {
+    "@hapi/lab": "22.x.x",
+    "belly-button": "6.x.x",
+    "stand-in": "4.x.x"
+  },
+  "keywords": [
+    "gelf",
+    "GELF",
+    "client",
+    "graylog",
+    "log",
+    "logging"
+  ]
+}
