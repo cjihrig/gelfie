@@ -82,6 +82,10 @@ The UDP transport supports the following options:
   `'none'` (no compression) and `zlib`. Optional. Defaults to `'zlib'`.
   - `graylogHost` (string) - The Graylog host to send data to.
   - `graylogPort` (integer) - The port on `graylogHost` to send data to.
+  - `reuseBuffer` (boolean) - If `true`, the transport reuses a single buffer to
+  send all chunks of a single message. This is done to conserve memory. If
+  `false`, all chunks are sent as quickly as possible using separate buffers.
+  Optional. Defaults to `true`.
 
 ### `GelfClient.prototype.connect()`
 

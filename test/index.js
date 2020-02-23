@@ -168,6 +168,7 @@ describe('Gelfie', () => {
       Assert.strictEqual(transport.host, 'foo');
       Assert.strictEqual(transport.port, 3000);
       Assert.strictEqual(transport.socket, null);
+      Assert.strictEqual(transport.reuseBuffer, true);
     });
 
     it('validates constructor options', () => {
@@ -190,6 +191,11 @@ describe('Gelfie', () => {
         graylogHost: 'foo',
         graylogPort: 'bar'
       }, /^TypeError: graylogPort must be a number$/);
+      check({
+        graylogHost: 'foo',
+        graylogPort: 5,
+        reuseBuffer: 5
+      }, /^TypeError: reuseBuffer must be a boolean$/);
     });
 
     it('connect() sets up the socket', () => {
@@ -293,7 +299,7 @@ describe('Gelfie', () => {
       });
     });
 
-    it('chunks messages that are big enough', () => {
+    it('chunks messages that are big enough with reuseBuffer = true', () => {
       const client = new EventEmitter();
       const transport = new UdpTransport({
         bufferSize: 13,
@@ -331,6 +337,56 @@ describe('Gelfie', () => {
 
           called++;
           process.nextTick(cb);
+
+          if (called === 14) {
+            setImmediate(() => {
+              transport.close();
+              resolve();
+            });
+          }
+        };
+
+        transport.send(msg);
+      });
+    });
+
+    it('chunks messages that are big enough with reuseBuffer = false', () => {
+      const client = new EventEmitter();
+      const transport = new UdpTransport({
+        bufferSize: 13,
+        compression: 'none',
+        graylogHost: 'localhost',
+        graylogPort: 9000,
+        reuseBuffer: false
+      }, client);
+
+      transport.connect();
+      return new Promise((resolve, reject) => {
+        // Repeat 12 times. There will also be two quote characters in JSON.
+        // With a buffer size of 13, sending 14 total characters requires 14
+        // chunks, where each chunk is the 12 byte header + 1 data byte.
+        const msg = 'x'.repeat(12);
+        let called = 0;
+
+        transport.socket.send = function (...args) {
+          const [buf, port, host] = args;
+
+          Assert.strictEqual(args.length, 3);
+          Assert.strictEqual(port, 9000);
+          Assert.strictEqual(host, 'localhost');
+          Assert.strictEqual(buf.length, 13);
+          Assert.strictEqual(buf[0], 0x1e);
+          Assert.strictEqual(buf[1], 0x0f);
+          Assert.strictEqual(buf[10], called);
+          Assert.strictEqual(buf[11], 14);
+
+          if (called === 0 || called === 13) {
+            Assert.strictEqual(buf[12], '"'.charCodeAt(0));
+          } else {
+            Assert.strictEqual(buf[12], 'x'.charCodeAt(0));
+          }
+
+          called++;
 
           if (called === 14) {
             setImmediate(() => {
