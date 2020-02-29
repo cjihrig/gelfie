@@ -50,8 +50,8 @@ remote server. `gelfie` also exports a table of log level constants.
       - `host` (string) - Used as the `host` field in GELF data. Optional. Defaults to `os.hostname()` from the Node.js runtime.
       - `serializer(field)` (function) - A function used to customize the serialization of the GELF `short_message` and `full_message` fields. The only parameter passed to the `serializer()` function is `field`, which corresponds to the `short_message` or `full_message`. Optional. Defaults to `GelfClient.defaultSerializer()`. An example use of this function is to
       improve the serialization of objects that do not naturally map to JSON, such as `Map`s and circular data structures.
-      - `transport` (string) - The type of network transport to use. `'udp'` is
-      the only option currently supported, but `'tcp'` may be added in the future. Optional. Defaults to `'udp'`.
+      - `transport` (string) - The type of network transport to use. Valid
+      values are `'udp'` and `'tcp'`. Optional. Defaults to `'udp'`.
       - `version` (string) - Used as the `version` field in GELF data. Optional. Defaults to `'1.1'`.
 
 Constructs a new `GelfClient` instance. Must be called with `new`. Internally,
@@ -87,6 +87,26 @@ The UDP transport supports the following options:
   `false`, all chunks are sent as quickly as possible using separate buffers.
   Optional. Defaults to `true`.
 
+##### TCP
+
+The TCP transport supports the following options:
+
+  - `graylogHost` (string) - The Graylog host to send data to.
+  - `graylogPort` (integer) - The port on `graylogHost` to send data to.
+  - `maxBacklogSize` (integer) - If the underlying TCP socket cannot send data
+  fast enough to keep up with the application, `gelfie` will respect
+  backpressure, by buffering messages until the socket emits a `'drain'` event.
+  At that time, `gelfie` will attempt to send all buffered messages, while still
+  respecting backpressure. `maxBacklogSize` defines the maximum number of
+  messages that will be buffered. Attempting to buffer more messages results in
+  an error being emitted. If the transport is closed while there are buffered
+  messages, they will be silently discarded. Optional. Defaults to 1024.
+  - `socketOptions` (object) - An object passed to Node's `net.Socket`. These
+  options will be passed verbatim, with the exception of the `host` and `port`
+  options, which take their values from the transport's `graylogHost` and
+  `graylogPort` options. Optional. Defaults to
+  `{ host: graylogHost, port: graylogPort }`.
+
 ### `GelfClient.prototype.connect()`
 
   - Arguments
@@ -95,7 +115,7 @@ The UDP transport supports the following options:
     - Nothing
 
 Performs any asynchronous operations required to begin sending GELF data to a
-remote server. Depending on the transport in use, this function may returns a
+remote server. Depending on the transport in use, this function may return a
 `Promise`.
 
 ### `GelfClient.prototype.close()`

@@ -1,11 +1,13 @@
 'use strict';
 const Assert = require('assert');
 const EventEmitter = require('events');
+const Net = require('net');
 const Os = require('os');
 const Zlib = require('zlib');
 const Lab = require('@hapi/lab');
 const StandIn = require('stand-in');
 const { GelfClient, levels } = require('../lib');
+const { TcpTransport } = require('../lib/tcp');
 const { UdpTransport } = require('../lib/udp');
 const { describe, it } = exports.lab = Lab.script();
 
@@ -32,6 +34,12 @@ describe('Gelfie', () => {
     check({ transport: 5 }, /^TypeError: transport must be a string$/);
     check({ transport: 'xxx' }, /^Error: unsupported transport: xxx$/);
     check({ serializer: 5 }, /^TypeError: serializer must be a function$/);
+
+    // Verify valid transports
+    // eslint-disable-next-line no-new
+    new GelfClient({ graylogHost: 'foo', graylogPort: 3000, transport: 'udp' });
+    // eslint-disable-next-line no-new
+    new GelfClient({ graylogHost: 'foo', graylogPort: 3000, transport: 'tcp' });
   });
 
   it('supports all expected functions', () => {
@@ -474,6 +482,229 @@ describe('Gelfie', () => {
     });
   });
 
+  describe('TcpTransport', () => {
+    it('sets defaults in the constructor', () => {
+      const testClient = {};
+      const transport = new TcpTransport({
+        graylogHost: 'foo',
+        graylogPort: 3000
+      }, testClient);
+
+      Assert.deepStrictEqual(transport.backlog, []);
+      Assert.strictEqual(transport.canAcceptData, true);
+      Assert.strictEqual(transport.client, testClient);
+      Assert.strictEqual(transport.host, 'foo');
+      Assert.strictEqual(transport.maxBacklogSize, 1024);
+      Assert.strictEqual(transport.port, 3000);
+      Assert.strictEqual(transport.socket, null);
+      Assert.deepStrictEqual(transport.socketOptions, {
+        port: 3000,
+        host: 'foo'
+      });
+    });
+
+    it('validates constructor options', () => {
+      function check (options, err) {
+        Assert.throws(() => {
+          new TcpTransport(options, {});  // eslint-disable-line no-new
+        }, err);
+      }
+
+      check({ graylogHost: 1 }, /^TypeError: graylogHost must be a string$/);
+      check({
+        graylogHost: 'foo',
+        graylogPort: 'bar'
+      }, /^TypeError: graylogPort must be a number$/);
+      check({
+        graylogHost: 'foo',
+        graylogPort: 5,
+        maxBacklogSize: 'foo'
+      }, /^TypeError: maxBacklogSize must be a number$/);
+      check({
+        graylogHost: 'foo',
+        graylogPort: 5,
+        maxBacklogSize: -1
+      }, /^RangeError: maxBacklogSize must be a safe integer >= 0$/);
+      check({
+        graylogHost: 'foo',
+        graylogPort: 5,
+        maxBacklogSize: Infinity
+      }, /^RangeError: maxBacklogSize must be a safe integer >= 0$/);
+      check({
+        graylogHost: 'foo',
+        graylogPort: 5,
+        socketOptions: null
+      }, /^TypeError: socketOptions must be an object$/);
+      check({
+        graylogHost: 'foo',
+        graylogPort: 5,
+        socketOptions: 'foo'
+      }, /^TypeError: socketOptions must be an object$/);
+    });
+
+    it('connect() sets up the socket', async () => {
+      const server = await createTcpServer();
+      const client = new EventEmitter();
+      const { port, address } = server.address();
+      const transport = new TcpTransport({
+        graylogHost: address,
+        graylogPort: port
+      }, client);
+
+      Assert.strictEqual(transport.socket, null);
+      await transport.connect();
+      Assert(transport.socket !== null && typeof transport.socket === 'object');
+      transport.socket.end(() => { server.close(); });
+    });
+
+    it('forwards error events to the gelf client', async () => {
+      const server = await createTcpServer();
+      const client = new EventEmitter();
+      const { port, address } = server.address();
+      const transport = new TcpTransport({
+        graylogHost: address,
+        graylogPort: port
+      }, client);
+      const testError = new Error('test error');
+
+      await transport.connect();
+      return new Promise((resolve, reject) => {
+        client.on('error', (err) => {
+          transport.socket.end(() => {
+            server.close();
+            Assert.strictEqual(err, testError);
+            resolve();
+          });
+        });
+
+        transport.socket.emit('error', testError);
+      });
+    });
+
+    it('close shuts the transport down', async () => {
+      const server = await createTcpServer();
+      const client = new EventEmitter();
+      const { port, address } = server.address();
+      const transport = new TcpTransport({
+        graylogHost: address,
+        graylogPort: port
+      }, client);
+
+      await transport.connect();
+      Assert(transport.socket !== null && typeof transport.socket === 'object');
+      return new Promise((resolve, reject) => {
+        const socket = transport.socket;
+
+        socket.on('end', () => {
+          server.close();
+          resolve();
+        });
+
+        transport.close();
+        Assert.strictEqual(transport.socket, null);
+        Assert.strictEqual(transport.client, null);
+      });
+    });
+
+    it('close can be called multiple times', async () => {
+      const server = await createTcpServer();
+      const client = new EventEmitter();
+      const { port, address } = server.address();
+      const transport = new TcpTransport({
+        graylogHost: address,
+        graylogPort: port
+      }, client);
+
+      await transport.connect();
+      Assert(transport.socket !== null && typeof transport.socket === 'object');
+      transport.close();
+      Assert.strictEqual(transport.socket, null);
+      Assert.strictEqual(transport.client, null);
+      transport.close();
+      Assert.strictEqual(transport.socket, null);
+      Assert.strictEqual(transport.client, null);
+    });
+
+    it('sends data to the server', async () => {
+      const server = await createTcpServer();
+      const client = new EventEmitter();
+      const { port, address } = server.address();
+      const transport = new TcpTransport({
+        graylogHost: address,
+        graylogPort: port
+      }, client);
+
+      await transport.connect();
+      return new Promise((resolve, reject) => {
+        let count = 0;
+        server.on('gelf', (msg) => {
+          count++;
+          Assert(count >= 1 && count <= 2);
+
+          if (count === 1) {
+            Assert.deepStrictEqual(msg, { foo: 'bar' });
+          } else if (count === 2) {
+            Assert.deepStrictEqual(msg, { baz: 'quux' });
+            server.close();
+            resolve();
+          }
+        });
+
+        transport.send({ foo: 'bar' });
+        transport.send({ baz: 'quux' });
+        transport.close();
+      });
+    });
+
+    it('handles backpressure when sending data', async () => {
+      const server = await createTcpServer();
+      const client = new EventEmitter();
+      const { port, address } = server.address();
+      const transport = new TcpTransport({
+        graylogHost: address,
+        graylogPort: port,
+        maxBacklogSize: 2
+      }, client);
+
+      await transport.connect();
+      return new Promise((resolve, reject) => {
+        let count = 0;
+
+        transport.canAcceptData = false;
+
+        server.on('gelf', (msg) => {
+          count++;
+          Assert(count >= 1 && count <= 2);
+
+          if (count === 1) {
+            Assert.deepStrictEqual(msg, { foo: 1 });
+          } else if (count === 2) {
+            Assert.deepStrictEqual(msg, { bar: 2 });
+            server.close();
+            resolve();
+          }
+        });
+
+        client.on('error', (err) => {
+          // The first two messages should be buffered. The third message
+          // triggered this error.
+          Assert.strictEqual(err.message, 'too many messages buffered');
+          Assert.deepStrictEqual(transport.backlog, [
+            Buffer.from(`${JSON.stringify({ foo: 1 })}\0`),
+            Buffer.from(`${JSON.stringify({ bar: 2 })}\0`)
+          ]);
+
+          transport.socket.emit('drain');
+          transport.close();
+        });
+
+        transport.send({ foo: 1 });
+        transport.send({ bar: 2 });
+        transport.send({ baz: 3 });
+      });
+    });
+  });
+
   it('exports log level constants', () => {
     Assert.deepStrictEqual(levels, {
       EMERG: 0,
@@ -487,3 +718,32 @@ describe('Gelfie', () => {
     });
   });
 });
+
+
+function createTcpServer () {
+  const server = Net.createServer(async (socket) => {
+    const chunks = [];
+    let totalLength = 0;
+
+    for await (const chunk of socket) {
+      chunks.push(chunk);
+      totalLength += chunk.byteLength;
+    }
+
+    const messages = Buffer.concat(chunks, totalLength);
+    let start = 0;
+    let end;
+
+    while ((end = messages.indexOf(0, start)) !== -1) {
+      const msg = messages.slice(start, end);
+      start = end + 1;
+      server.emit('gelf', JSON.parse(msg.toString('utf8')));
+    }
+  });
+
+  return new Promise((resolve, reject) => {
+    server.listen(() => {
+      resolve(server);
+    });
+  });
+}
